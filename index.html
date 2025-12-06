@@ -4,6 +4,9 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Guía Interactiva: Plantilla de Rifa en Excel</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -96,12 +99,12 @@
             </div>
 
             <h2 class="text-xl md:text-3xl font-bold text-white tracking-wide">
-                Proyecto: Gana un garrafon de oldpar
-                
+                Proyecto: Gana un garrafon de oldpar"
+
             </h2>
             <h2 class="text-xl md:text-3xl font-bold text-white tracking-wide">
                 valor del premio: $5000
-                
+
             </h2>
 
         </div>
@@ -135,7 +138,7 @@
 
                 <!-- LIST -->
                 <div class="bg-gray-800 p-6 rounded-lg shadow-xl border border-gray-700">
-                    <h3 class="text-xl font-bold text-white mb-2">2.LISTA  DE CONCURSANTES</h3>
+                    <h3 class="text-xl font-bold text-white mb-2">2.LISTA DE CONCURSANTES</h3>
 
                     <div class="grid grid-cols-3 gap-1 mb-2 font-bold text-xs text-center">
                         <div class="bg-[#003366] text-white p-2 rounded-tl">NÚMERO</div>
@@ -189,8 +192,15 @@
 
     <!-- FOOTER -->
     <footer class="bg-black text-center py-6 text-gray-500 text-sm">
-        <p>&copy; 2025 Generador de Rifa Profesional.</p>
+        <p>&copy; 2025 Generador de Rifa Profesional. <span class="text-xs text-gray-700 ml-2">v1.1</span></p>
     </footer>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay"
+        class="fixed inset-0 bg-black bg-opacity-80 z-[9999] pointer-events-auto flex flex-col items-center justify-center hidden">
+        <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-[#FFD700] mb-4"></div>
+        <p class="text-white text-xl font-bold animate-pulse">Cargando datos del sorteo...</p>
+    </div>
 
     <!-- JAVASCRIPT LOGIC -->
     <script>
@@ -204,6 +214,7 @@
         const TOTAL_TICKETS = 100;
         let assignedTickets = new Map();
         let chartInstance = null;
+        let isLoading = false;
 
         const ADMIN_CODE_ENCODED = "U2hheWRhMTkwNA==";
         function decodeBase64(s) { try { return atob(s); } catch { return ""; } }
@@ -220,9 +231,21 @@
             updateStatsUI();
         });
 
+        function showLoading(show) {
+            isLoading = show;
+            const overlay = document.getElementById("loadingOverlay");
+            if (show) {
+                overlay.classList.remove("hidden");
+            } else {
+                overlay.classList.add("hidden");
+            }
+        }
+
         async function loadInitialData() {
+            showLoading(true);
             try {
-                const res = await fetch(API_URL);
+                // Add timestamp to prevent caching
+                const res = await fetch(API_URL + "?t=" + new Date().getTime());
                 const json = await res.json();
                 if (json.status === "ok") {
                     assignedTickets.clear();
@@ -238,6 +261,9 @@
                 }
             } catch (e) {
                 console.error("Error loading initial data:", e);
+                alert("Error cargando los datos. Por favor recarga la página.");
+            } finally {
+                showLoading(false);
             }
         }
 
@@ -258,6 +284,8 @@
         }
 
         async function toggleTicket(number) {
+            if (isLoading) return; // Prevent clicks while loading
+
             if (assignedTickets.has(number)) {
                 alert("Ese número ya está asignado.");
                 return;
@@ -266,11 +294,18 @@
             const buyerName = prompt("Nombre para el número " + number + ":");
             if (!buyerName) return;
 
+            // Optimistic update
             assignedTickets.set(number, buyerName.trim());
             renderGridState();
             renderParticipantsList();
             updateStatsUI();
             updateChart();
+
+            // Show mini loading or just background sync? 
+            // Let's block full interaction to be safe and ensure consistency, 
+            // or we can let it run in background. 
+            // Given the user's report of "not appearing", blocking might be safer to confirm save.
+            showLoading(true);
 
             try {
                 await fetch(API_URL, {
@@ -283,9 +318,18 @@
                     }),
                     headers: { "Content-Type": "text/plain;charset=utf-8" }
                 });
+                // Success - keep optimistic state
             } catch (e) {
                 console.error(e);
-                alert("No se pudo guardar en Google Sheets");
+                alert("No se pudo guardar en Google Sheets. Se revertirá el cambio.");
+                // Revert optimistic update
+                assignedTickets.delete(number);
+                renderGridState();
+                renderParticipantsList();
+                updateStatsUI();
+                updateChart();
+            } finally {
+                showLoading(false);
             }
         }
 
@@ -294,6 +338,8 @@
         ============================ */
 
         async function deleteTicket(number) {
+            if (isLoading) return;
+
             const owner = assignedTickets.get(number);
             if (!confirm("¿Eliminar " + number + " de " + owner + "?")) return;
 
@@ -301,6 +347,7 @@
             if (code === null) return;
             code = code.trim();
 
+            showLoading(true);
             try {
                 const res = await fetch(API_URL, {
                     method: "POST",
@@ -326,6 +373,8 @@
 
             } catch (e) {
                 alert("Error eliminando");
+            } finally {
+                showLoading(false);
             }
         }
 
@@ -371,25 +420,43 @@
         ============================ */
 
         async function resetRaffle() {
+            if (isLoading) return;
+
             if (!confirm("¿Reiniciar sorteo completo?")) return;
             let code = prompt("Código admin:");
             if (code === null) return;
             code = code.trim();
 
-            for (let n of assignedTickets.keys()) {
-                await fetch(API_URL, {
-                    method: "POST",
-                    body: JSON.stringify({ action: "delete", clave: code, numero: n }),
-                    headers: { "Content-Type": "text/plain;charset=utf-8" }
-                });
-            }
+            showLoading(true);
+            try {
+                // We can't batch delete easily with current API, so we iterate. 
+                // Ideally backend should have a 'reset' action, but let's stick to what we have.
+                // Warning: This loop might be slow if many tickets.
 
-            assignedTickets.clear();
-            renderGridState();
-            renderParticipantsList();
-            updateStatsUI();
-            updateChart();
-            alert("Sorteo reiniciado.");
+                // Better approach: Just clear local and let user handle backend if they really want, 
+                // OR warn them it might take time. 
+                // Since the user complained about sync, let's try to be robust.
+
+                for (let n of assignedTickets.keys()) {
+                    await fetch(API_URL, {
+                        method: "POST",
+                        body: JSON.stringify({ action: "delete", clave: code, numero: n }),
+                        headers: { "Content-Type": "text/plain;charset=utf-8" }
+                    });
+                }
+
+                assignedTickets.clear();
+                renderGridState();
+                renderParticipantsList();
+                updateStatsUI();
+                updateChart();
+                alert("Sorteo reiniciado.");
+            } catch (e) {
+                console.error(e);
+                alert("Error al intentar reiniciar todo.");
+            } finally {
+                showLoading(false);
+            }
         }
 
         /* ============================
